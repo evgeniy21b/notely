@@ -89,7 +89,12 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
         hint.textColor = .tertiaryLabelColor
         hint.lineBreakMode = .byTruncatingTail
         hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let top = NSStackView(views: [themDot, meDot, status, NSView(), hint])
+        let close = NSButton(title: "✕", target: self, action: #selector(closePressed))
+        close.isBordered = false
+        close.font = .systemFont(ofSize: 13, weight: .semibold)
+        close.contentTintColor = .secondaryLabelColor
+        close.toolTip = "Закрыть Notely"
+        let top = NSStackView(views: [themDot, meDot, status, NSView(), hint, close])
         top.spacing = 6
         top.alignment = .centerY
 
@@ -175,6 +180,7 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
     // MARK: содержимое
 
     private var lastText = ""
+    private var lastShown = ""
     private var lastDim = false
 
     func setAnswer(_ text: String, dim: Bool = false) {
@@ -201,8 +207,13 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
         }
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
         out.addAttribute(.paragraphStyle, value: p, range: NSRange(location: 0, length: out.length))
+        // новый ответ — наверх; дописывание того же ответа — не дёргаем прокрутку
+        let continuing = !lastShown.isEmpty && text.hasPrefix(lastShown)
+        lastShown = text
+        let origin = scroll.contentView.bounds.origin
         answerView.textStorage?.setAttributedString(out)
-        answerView.scrollToBeginningOfDocument(nil)
+        if continuing { scroll.contentView.scroll(to: origin); scroll.reflectScrolledClipView(scroll.contentView) }
+        else { answerView.scrollToBeginningOfDocument(nil) }
     }
 
     private func markdown(_ text: String, size: CGFloat, color: NSColor) -> NSAttributedString {
@@ -271,6 +282,7 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
     }
 
     @objc private func shotPressed() { onScreenshot?() }
+    @objc private func closePressed() { NSApp.terminate(nil) }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
         if sel == #selector(NSResponder.cancelOperation(_:)) {
