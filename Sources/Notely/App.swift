@@ -129,10 +129,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeys.add(kVK_ANSI_I) { [weak self] in self?.showAndFocus() }
         HotKeys.add(kVK_ANSI_S) { [weak self] in self?.attachScreenshot(send: true) }
         HotKeys.add(kVK_ANSI_P) { [weak self] in self?.togglePause() }
-        HotKeys.add(kVK_ANSI_Equal) { [weak self] in self?.overlay.changeFont(1) }
-        HotKeys.add(kVK_ANSI_Minus) { [weak self] in self?.overlay.changeFont(-1) }
-        HotKeys.add(kVK_RightArrow) { [weak self] in self?.overlay.changeWidth(0.05) }
-        HotKeys.add(kVK_LeftArrow) { [weak self] in self?.overlay.changeWidth(-0.05) }
         HotKeys.add(kVK_DownArrow) { [weak self] in self?.overlay.scroll(by: 60) }
         HotKeys.add(kVK_UpArrow) { [weak self] in self?.overlay.scroll(by: -60) }
 
@@ -219,7 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         let m = NSMenu()
-        m.addItem(withTitle: "Показать / скрыть  (⌃⌥Space)", action: #selector(menuToggle), keyEquivalent: "").target = self
+        m.addItem(withTitle: "Показать / свернуть  (⌃⌥Space)", action: #selector(menuToggle), keyEquivalent: "").target = self
         m.addItem(withTitle: paused ? "Продолжить слушать  (⌃⌥P)" : "Пауза  (⌃⌥P)", action: #selector(menuPause), keyEquivalent: "").target = self
         m.addItem(withTitle: "Новый разговор (очистить контекст)", action: #selector(menuReset), keyEquivalent: "").target = self
         m.addItem(.separator())

@@ -5,7 +5,12 @@ final class OverlayPanel: NSPanel {
     var onPasteImage: ((NSImage) -> Void)?
 
     init(rect: NSRect) {
-        super.init(contentRect: rect, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        // titled+resizable даёт родное растягивание за края; заголовок прозрачный и без кнопок
+        super.init(contentRect: rect, styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { standardWindowButton(b)?.isHidden = true }
+        minSize = NSSize(width: 360, height: 140)
         isFloatingPanel = true
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
@@ -84,17 +89,17 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingTail
-        let hint = NSTextField(labelWithString: "⌃⌥Space скрыть · ⌃⌥I ввод · ⌃⌥S скрин · ⌃⌥P пауза · ⌃⌥ +/− шрифт · ⌃⌥ ←/→ ширина")
-        hint.font = .systemFont(ofSize: 10)
-        hint.textColor = .tertiaryLabelColor
-        hint.lineBreakMode = .byTruncatingTail
-        hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let close = NSButton(title: "✕", target: self, action: #selector(closePressed))
-        close.isBordered = false
-        close.font = .systemFont(ofSize: 13, weight: .semibold)
-        close.contentTintColor = .secondaryLabelColor
-        close.toolTip = "Закрыть Notely"
-        let top = NSStackView(views: [themDot, meDot, status, NSView(), hint, close])
+        func titleButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSButton {
+            let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: self, action: action)
+            b.isBordered = false
+            b.contentTintColor = .secondaryLabelColor
+            b.toolTip = tip
+            b.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
+            return b
+        }
+        let minimize = titleButton("minus", "Свернуть (вернуть: иконка в строке меню или ⌃⌥Space)", #selector(minimizePressed))
+        let close = titleButton("xmark", "Закрыть Notely", #selector(closePressed))
+        let top = NSStackView(views: [themDot, meDot, status, NSView(), minimize, close])
         top.spacing = 6
         top.alignment = .centerY
 
@@ -157,6 +162,8 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
     // MARK: геометрия
 
     func layoutOnScreen() {
+        panel.setFrameAutosaveName("NotelyPanel")
+        if panel.setFrameUsingName("NotelyPanel") { return }   // пользователь уже растянул/подвинул — помним
         guard let screen = NSScreen.main else { return }
         let vf = screen.visibleFrame
         let w = max(420, min(vf.width - 20, vf.width * Settings.widthFraction))
@@ -202,7 +209,7 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
                 ])
                 out.append(a)
             } else {
-                out.append(markdown(part, size: size, color: color))
+                out.append(renderWithTables(part, size: size, color: color))
             }
         }
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
@@ -214,6 +221,39 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
         answerView.textStorage?.setAttributedString(out)
         if continuing { scroll.contentView.scroll(to: origin); scroll.reflectScrolledClipView(scroll.contentView) }
         else { answerView.scrollToBeginningOfDocument(nil) }
+    }
+
+    /// Markdown-таблицы (строки с «|») рисуем выровненным моноширинным блоком, остальное — обычным markdown.
+    private func renderWithTables(_ text: String, size: CGFloat, color: NSColor) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        var buf: [String] = []
+        var table: [String] = []
+        func flushText() { if !buf.isEmpty { out.append(markdown(buf.joined(separator: "\n") + "\n", size: size, color: color)); buf = [] } }
+        func flushTable() {
+            guard !table.isEmpty else { return }
+            let rows = table.filter { !$0.replacingOccurrences(of: "|", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "-: ")).isEmpty }
+                .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "|"))
+                    .components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "**", with: "") } }
+            let cols = rows.map(\.count).max() ?? 0
+            var widths = [Int](repeating: 0, count: cols)
+            for r in rows { for (i, c) in r.enumerated() { widths[i] = max(widths[i], c.count) } }
+            var lines: [String] = []
+            for (ri, r) in rows.enumerated() {
+                lines.append((0..<cols).map { i in let c = i < r.count ? r[i] : ""; return c.padding(toLength: widths[i], withPad: " ", startingAt: 0) }.joined(separator: "  │ "))
+                if ri == 0 { lines.append(widths.map { String(repeating: "─", count: $0) }.joined(separator: "──┼─")) }
+            }
+            out.append(NSAttributedString(string: lines.joined(separator: "\n") + "\n", attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: size - 2, weight: .regular), .foregroundColor: color]))
+            table = []
+        }
+        for l in text.components(separatedBy: "\n") {
+            if l.trimmingCharacters(in: .whitespaces).hasPrefix("|") { flushText(); table.append(l) }
+            else { flushTable(); buf.append(l) }
+        }
+        flushTable(); flushText()
+        // убрать лишний перевод строки в конце
+        if out.string.hasSuffix("\n") && !text.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
+        return out
     }
 
     private func markdown(_ text: String, size: CGFloat, color: NSColor) -> NSAttributedString {
@@ -283,6 +323,7 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
 
     @objc private func shotPressed() { onScreenshot?() }
     @objc private func closePressed() { NSApp.terminate(nil) }
+    @objc private func minimizePressed() { panel.orderOut(nil) }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
         if sel == #selector(NSResponder.cancelOperation(_:)) {
