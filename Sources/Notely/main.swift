@@ -11,6 +11,6 @@ if let i = args.firstIndex(of: "--test-file"), i + 1 < args.count {
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
-    app.setActivationPolicy(.regular)   // иконка в Dock
+    app.setActivationPolicy(.accessory)   // без Dock, только значок в строке меню
     app.run()
 }
