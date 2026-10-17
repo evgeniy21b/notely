@@ -14,6 +14,7 @@ final class Brain {
 
     private let key: String
     private var lines: [(who: String, text: String)] = []
+    private var recentThem: [(Date, Set<String>)] = []   // слова собеседника за последние секунды — фильтр эха
     private var themBuf = ""
     private var meBuf = ""
     private var unanswered: [String] = []   // реплики собеседника после последней подсказки
@@ -33,6 +34,8 @@ final class Brain {
     - Если вопрос про опыт, а профиля нет — дай структуру ответа с местами для подстановки в [квадратных скобках].
     - Если вопрос про опыт кандидата и есть профиль — опирайся на профиль, конкретные факты оттуда.
     - Не используй заголовки и длинные списки.
+    - Если вопрос в расшифровке выглядит обрезанным или с искажёнными словами — не проси переспросить: по контексту угадай самый вероятный вопрос и сразу отвечай на него.
+    - Реплики «Я» могут содержать эхо слов собеседника (динамики) — не путай их с ответами кандидата.
     """
 
     // MARK: расшифровка
@@ -46,11 +49,28 @@ final class Brain {
     func meFinal(_ text: String, speechFinal: Bool) {
         lock.lock()
         if !text.isEmpty { meBuf += (meBuf.isEmpty ? "" : " ") + text }
-        if speechFinal, !meBuf.isEmpty { append(who: "Я", meBuf); meBuf = "" }
+        if speechFinal { commitMe() }
         lock.unlock()
     }
-    func meUtteranceEnd() {
-        lock.lock(); if !meBuf.isEmpty { append(who: "Я", meBuf); meBuf = "" }; lock.unlock()
+    func meUtteranceEnd() { lock.lock(); commitMe(); lock.unlock() }
+
+    /// Динамики: микрофон слышит собеседника. Реплику «Я», почти целиком состоящую из его недавних слов, выбрасываем.
+    private func commitMe() {
+        let t = meBuf.trimmingCharacters(in: .whitespaces)
+        meBuf = ""
+        guard !t.isEmpty else { return }
+        let words = Self.words(t)
+        recentThem.removeAll { Date().timeIntervalSince($0.0) > 25 }
+        let them = recentThem.reduce(into: Set<String>()) { $0.formUnion($1.1) }
+        if !words.isEmpty {
+            let overlap = Double(words.filter { them.contains($0) }.count) / Double(words.count)
+            if overlap >= 0.6 { Log.write("echo dropped (\(Int(overlap * 100))%): \(t)"); return }
+        }
+        append(who: "Я", t)
+    }
+
+    static func words(_ s: String) -> [String] {
+        s.lowercased().components(separatedBy: CharacterSet.letters.union(.decimalDigits).inverted).filter { $0.count > 1 }
     }
 
     private func append(who: String, _ text: String) {
@@ -65,6 +85,7 @@ final class Brain {
         themBuf = ""
         guard !t.isEmpty else { lock.unlock(); return }
         append(who: "Собеседник", t)
+        recentThem.append((Date(), Set(Self.words(t))))
         let words = t.split(whereSeparator: { $0 == " " }).count
         if words >= 3 {
             unanswered.append(t)

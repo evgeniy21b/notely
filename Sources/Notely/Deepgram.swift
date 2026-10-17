@@ -15,9 +15,20 @@ final class DeepgramStream: NSObject {
     private var keepAlive: Timer?
     private let q = DispatchQueue(label: "notely.dg")
 
-    private static let url = URL(string:
-        "wss://api.deepgram.com/v1/listen?model=nova-3&language=ru&encoding=linear16&sample_rate=16000&channels=1"
-        + "&punctuate=true&smart_format=true&interim_results=true&endpointing=400&utterance_end_ms=1200&vad_events=true")!
+    private static var url: URL {
+        var c = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
+        var items = [
+            URLQueryItem(name: "model", value: "nova-3"), URLQueryItem(name: "language", value: "ru"),
+            URLQueryItem(name: "encoding", value: "linear16"), URLQueryItem(name: "sample_rate", value: "16000"),
+            URLQueryItem(name: "channels", value: "1"), URLQueryItem(name: "punctuate", value: "true"),
+            URLQueryItem(name: "smart_format", value: "true"), URLQueryItem(name: "interim_results", value: "true"),
+            URLQueryItem(name: "endpointing", value: "400"), URLQueryItem(name: "utterance_end_ms", value: "1200"),
+            URLQueryItem(name: "vad_events", value: "true"),
+        ]
+        items += AppPaths.keytermList().map { URLQueryItem(name: "keyterm", value: $0) }
+        c.queryItems = items
+        return c.url!
+    }
 
     init(label: String, key: String) {
         self.label = label; self.key = key

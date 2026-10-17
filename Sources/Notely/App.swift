@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var paused = false
     private var themLevel: Float = 0, meLevel: Float = 0
+    private var themActiveUntil = Date.distantPast   // пока звучит собеседник (+0.6 с хвост) — микрофон глушим (эхо динамиков)
     private var levelTimer: Timer?
     private var problems: [String] = []
 
@@ -103,9 +104,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         meDG.onFinal = { [weak self] t, sf in self?.brain.meFinal(t, speechFinal: sf) }
         meDG.onUtteranceEnd = { [weak self] in self?.brain.meUtteranceEnd() }
 
-        sys.onPCM = { [weak self] d, l in guard let self, !self.paused else { return }; self.themLevel = max(self.themLevel, l); self.themDG.send(d) }
+        sys.onPCM = { [weak self] d, l in
+            guard let self, !self.paused else { return }
+            self.themLevel = max(self.themLevel, l)
+            if l > 0.04 { self.themActiveUntil = Date().addingTimeInterval(0.6) }
+            self.themDG.send(d)
+        }
         sys.onError = { [weak self] e in DispatchQueue.main.async { self?.overlay.setStatus("звук созвона отвалился: \(e)") } }
-        mic.onPCM = { [weak self] d, l in guard let self, !self.paused else { return }; self.meLevel = max(self.meLevel, l); self.meDG.send(d) }
+        mic.onPCM = { [weak self] d, l in
+            guard let self, !self.paused else { return }
+            self.meLevel = max(self.meLevel, l)
+            // собеседник говорит — шлём тишину вместо микрофона, чтобы его голос из динамиков не попал в «Я»
+            self.meDG.send(Date() < self.themActiveUntil ? Data(count: d.count) : d)
+        }
 
         overlay.onSend = { [weak self] text, img in
             guard let self else { return }

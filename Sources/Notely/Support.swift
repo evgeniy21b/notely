@@ -40,6 +40,61 @@ enum AppPaths {
         return d
     }()
     static var profile: URL { dir.appendingPathComponent("profile.md") }
+    static var keyterms: URL { dir.appendingPathComponent("keyterms.txt") }
+
+    static let defaultKeyterms = """
+    # Термины, которые распознавание должно слышать правильно. Одна строка — один термин. Строки с # пропускаются.
+    SQL
+    JOIN
+    LEFT JOIN
+    INNER JOIN
+    GROUP BY
+    HAVING
+    CTE
+    PostgreSQL
+    API
+    REST
+    SOAP
+    JSON
+    XML
+    Kafka
+    BPMN
+    UML
+    Jira
+    Confluence
+    Swagger
+    OpenAPI
+    Postman
+    Python
+    Docker
+    Kubernetes
+    Git
+    Agile
+    Scrum
+    Kanban
+    user story
+    use case
+    MVP
+    KPI
+    ETL
+    DWH
+    gRPC
+    OAuth
+    backend
+    frontend
+    """
+
+    /// Термины для Deepgram keyterm (nova-3): дефолт + то, что юзер допишет в keyterms.txt.
+    static func keytermList() -> [String] {
+        if !FileManager.default.fileExists(atPath: keyterms.path) {
+            try? defaultKeyterms.write(to: keyterms, atomically: true, encoding: .utf8)
+        }
+        let text = (try? String(contentsOf: keyterms, encoding: .utf8)) ?? defaultKeyterms
+        var seen = Set<String>()
+        return text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") && seen.insert($0.lowercased()).inserted }
+            .prefix(90).map { String($0) }
+    }
 
     static let profileTemplate = """
     # Профиль для подсказок
