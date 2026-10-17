@@ -21,7 +21,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>$(date +%Y%m%d%H%M)</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Notely слушает твой микрофон, чтобы подсказки учитывали твои ответы.</string>
   <key>NSScreenCaptureUsageDescription</key><string>Notely слушает звук созвона и делает скриншоты задач по запросу.</string>

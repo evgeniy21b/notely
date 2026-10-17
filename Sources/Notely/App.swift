@@ -84,8 +84,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var levelTimer: Timer?
     private var problems: [String] = []
 
+    /// Клик по иконке в Dock — показать окно (если было свёрнуто).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        overlay?.panel.orderFrontRegardless()
+        return false
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         AppPaths.ensureProfile()
+        // минимальное меню приложения: Cmd+Q и «Показать окно»
+        let main = NSMenu(); let appItem = NSMenuItem(); main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Показать окно", action: #selector(menuToggle), keyEquivalent: "").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Выйти из Notely", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        NSApp.mainMenu = main
         overlay = OverlayController()
         overlay.panel.orderFrontRegardless()
         buildMenu()
