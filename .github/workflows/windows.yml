@@ -1,0 +1,53 @@
+name: Windows build and tests
+on:
+  push:
+    branches: [windows-port, main]
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test conversation, PCM and API failure scenarios
+        run: dotnet test windows/Notely.Tests/Notely.Tests.csproj -c Release --logger "trx;LogFileName=tests.trx" --results-directory windows/artifacts/tests
+      - name: Publish self-contained Windows x64 application
+        run: dotnet publish windows/Notely.Windows/Notely.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o windows/artifacts/Notely-Windows-x64
+      - name: Exercise packaged executable and native Windows contracts
+        shell: pwsh
+        run: |
+          $report = Join-Path $PWD 'windows/artifacts/smoke-test.json'
+          $exe = Join-Path $PWD 'windows/artifacts/Notely-Windows-x64/Notely.exe'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-test', "`"$report`"") -PassThru
+          if (-not $process.WaitForExit(45000)) { $process.Kill(); throw 'Smoke test timed out' }
+          if (Test-Path $report) { Get-Content $report }
+          if ($process.ExitCode -ne 0) { throw "Smoke test failed: $($process.ExitCode)" }
+      - name: Include Windows quick-start guide
+        shell: pwsh
+        run: Copy-Item windows/QUICKSTART-RU.txt windows/artifacts/Notely-Windows-x64/README.txt
+      - name: Upload portable application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Notely-Windows-x64
+          path: windows/artifacts/Notely-Windows-x64/
+          retention-days: 14
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-test-results
+          path: |
+            windows/artifacts/tests/
+            windows/artifacts/smoke-test.json
+          retention-days: 14

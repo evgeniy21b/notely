@@ -2,3 +2,12 @@
 build/
 *.app
 signing/
+**/bin/
+**/obj/
+**/TestResults/
+windows/artifacts/
+*.user
+*.suo
+**/keys.dat*
+**/notely.log
+**/diagnostics.json
