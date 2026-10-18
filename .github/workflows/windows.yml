@@ -30,9 +30,16 @@ jobs:
           $report = Join-Path $PWD 'windows/artifacts/smoke-test.json'
           $exe = Join-Path $PWD 'windows/artifacts/Notely-Windows-x64/Notely.exe'
           $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-test', "`"$report`"") -PassThru
+          $null = $process.Handle
           if (-not $process.WaitForExit(45000)) { $process.Kill(); throw 'Smoke test timed out' }
-          if (Test-Path $report) { Get-Content $report }
+          if ($null -eq $process.ExitCode) { throw 'Smoke test returned no exit code' }
           if ($process.ExitCode -ne 0) { throw "Smoke test failed: $($process.ExitCode)" }
+          if (-not (Test-Path $report)) { throw 'Smoke test report is missing' }
+          $results = Get-Content $report -Raw | ConvertFrom-Json
+          if (@($results.PSObject.Properties).Count -ne 5 -or @($results.PSObject.Properties.Value | Where-Object { $_ -ne 'PASS' }).Count -gt 0) {
+            throw 'Smoke test report contains missing or failed checks'
+          }
+          Get-Content $report
       - name: Include Windows quick-start guide
         shell: pwsh
         run: Copy-Item windows/QUICKSTART-RU.txt windows/artifacts/Notely-Windows-x64/README.txt

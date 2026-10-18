@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Notely.Core;
 
 namespace Notely.Windows;
@@ -9,7 +8,6 @@ internal sealed class ListeningSession : IAsyncDisposable
     private readonly DeepgramStream them, me;
     private readonly Brain brain;
     private readonly long generation;
-    private long themActiveUntil;
     private volatile bool stopping;
     private readonly LoopbackSilence silence = new();
     private readonly CancellationTokenSource lifetime = new();
@@ -37,10 +35,11 @@ internal sealed class ListeningSession : IAsyncDisposable
             if (output)
             {
                 silence.AudioArrived();
-                if (level > 0.035f) Interlocked.Exchange(ref themActiveUntil, Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 0.6));
                 them.Send(data);
             }
-            else me.Send(Stopwatch.GetTimestamp() < Interlocked.Read(ref themActiveUntil) ? new byte[data.Length] : data);
+            // Never mute the candidate just because the interviewer recently spoke.
+            // Conservative transcript-level echo detection keeps short/overlapping replies.
+            else me.Send(data);
         };
     }
     private bool Current => !stopping && brain.Session == generation;

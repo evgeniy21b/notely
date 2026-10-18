@@ -391,7 +391,7 @@ internal sealed class MainWindow : Window
     {
         try
         {
-            var report = new { Version = "0.1.0", Windows = Environment.OSVersion.VersionString,
+            var report = new { Version = "0.1.1", Windows = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
                 CaptureExclusion = native?.ProtectionStatus, Hotkeys = native?.HotkeyErrors,
                 Audio = audioStatus.Text, HasKeys = keys is not null };

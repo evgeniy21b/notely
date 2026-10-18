@@ -4,17 +4,22 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Time.Testing;
 using Notely.Core;
 using Xunit;
 
 namespace Notely.Tests;
 
-public sealed class CoreTests
+public sealed partial class CoreTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
-    [Fact]
-    public async Task Interrupted_answer_stays_in_context_when_next_turn_is_not_a_question()
+    [Theory]
+    [InlineData("SKIP")]
+    [InlineData("**SKIP**")]
+    [InlineData("__skip__")]
+    [InlineData(" `SKIP`. ")]
+    public async Task Non_question_does_not_interrupt_the_visible_answer(string skip)
     {
         var fake = new ScriptedClient();
         using var brain = new Brain(fake, () => "", () => "test");
@@ -27,12 +32,15 @@ public sealed class CoreTests
         brain.Speech(true, "Ну хорошо давайте дальше", true);
         var second = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         Assert.Contains("Начало ответа", second.Request.Context);
-        second.Chunks.Writer.TryWrite("SK"); second.Chunks.Writer.TryWrite("IP"); second.Chunks.Writer.TryComplete();
+        foreach (var character in skip) second.Chunks.Writer.TryWrite(character.ToString());
+        second.Chunks.Writer.TryComplete();
         await Next(events.Reader, BrainEventKind.Skipped);
-        // A provider ignoring cancellation must still be unable to alter the newer answer.
-        first.Chunks.Writer.TryWrite("ЗАПОЗДАЛЫЙ ХВОСТ"); first.Chunks.Writer.TryComplete();
-        Assert.Single(brain.Snapshot().Where(e => e.Kind == "Твоя подсказка"));
-        Assert.DoesNotContain("ЗАПОЗДАЛЫЙ", brain.Snapshot().Single(e => e.Kind == "Твоя подсказка").Text);
+        Assert.False(first.Token.IsCancellationRequested);
+        first.Chunks.Writer.TryWrite(" завершение"); first.Chunks.Writer.TryComplete();
+        var continuation = await Next(events.Reader, BrainEventKind.Answer);
+        Assert.False(continuation.StartsNew); Assert.Equal("Начало ответа завершение", continuation.Text);
+        await Next(events.Reader, BrainEventKind.Done);
+        Assert.Equal("Начало ответа завершение", Assert.Single(brain.Snapshot(), e => e.Kind == "Твоя подсказка").Text);
     }
 
     [Fact]
@@ -84,21 +92,26 @@ public sealed class CoreTests
     }
 
     [Fact]
-    public async Task Simultaneous_manual_and_speech_requests_keep_only_one_active_generation()
+    public async Task Confirmed_auto_answer_replaces_manual_generation_and_rejects_its_late_chunks()
     {
         var fake = new ScriptedClient(); using var brain = new Brain(fake, () => "", () => "test");
-        var events = new ConcurrentQueue<BrainEvent>(); brain.Changed += events.Enqueue;
-        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        brain.Changed += e => { if (e.Kind == BrainEventKind.Done) done.TrySetResult(); };
-        await Task.WhenAll(Task.Run(() => brain.Ask("Ручной вопрос")), Task.Run(() => brain.Speech(true, "Что такое REST API", true)));
+        var events = Channel.CreateUnbounded<BrainEvent>(); brain.Changed += e => events.Writer.TryWrite(e);
+        brain.Ask("Ручной вопрос");
         var first = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+        first.Chunks.Writer.TryWrite("Ручной ответ"); await Next(events.Reader, BrainEventKind.Answer);
+        brain.Speech(true, "Что такое REST API", true);
         var second = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
-        first.Chunks.Writer.TryWrite("один"); first.Chunks.Writer.TryComplete();
-        second.Chunks.Writer.TryWrite("два"); second.Chunks.Writer.TryComplete();
+        Assert.False(first.Token.IsCancellationRequested);
+        second.Chunks.Writer.TryWrite("REST");
+        var promoted = await Next(events.Reader, BrainEventKind.Answer);
+        Assert.True(promoted.StartsNew); Assert.Equal("REST", promoted.Text);
+        first.Chunks.Writer.TryWrite("СТАРЫЙ ХВОСТ"); first.Chunks.Writer.TryComplete();
+        second.Chunks.Writer.TryWrite(" — архитектурный стиль."); second.Chunks.Writer.TryComplete();
+        Assert.Equal("REST — архитектурный стиль.", (await Next(events.Reader, BrainEventKind.Answer)).Text);
+        await Next(events.Reader, BrainEventKind.Done);
         await first.Finished.Task.WaitAsync(Deadline); await second.Finished.Task.WaitAsync(Deadline);
-        await done.Task.WaitAsync(Deadline);
-        Assert.Single(events.Where(e => e.Kind == BrainEventKind.Answer));
-        Assert.Single(brain.Snapshot().Where(e => e.Kind == "Твоя подсказка"));
+        Assert.Equal(2, brain.Snapshot().Count(e => e.Kind == "Твоя подсказка"));
+        Assert.DoesNotContain(brain.Snapshot(), e => e.Text.Contains("СТАРЫЙ ХВОСТ"));
     }
 
     [Fact]
@@ -137,7 +150,8 @@ public sealed class CoreTests
         brain.Speech(true, "Что такое REST API", true);
         Assert.Empty(brain.Snapshot()); Assert.False(fake.Calls.Reader.TryRead(out _));
         brain.Paused = false; brain.Speech(true, "API", true); brain.Speech(false, "API API", true);
-        Assert.Single(brain.Snapshot());
+        Assert.Equal(2, brain.Snapshot().Length);
+        Assert.Contains(brain.Snapshot(), e => e.Kind == "Я" && e.Text == "API API");
     }
 
     [Fact]
@@ -268,12 +282,12 @@ public sealed class CoreTests
     { public DateTimeOffset Now = new(2026, 10, 18, 0, 0, 0, TimeSpan.Zero); public override DateTimeOffset GetUtcNow() => Now; }
     private sealed class ScriptedClient : ICompletionClient
     {
-        public sealed record Call(CompletionRequest Request, Channel<string> Chunks, TaskCompletionSource Finished);
+        public sealed record Call(CompletionRequest Request, Channel<string> Chunks, TaskCompletionSource Finished, CancellationToken Token);
         public Channel<Call> Calls = Channel.CreateUnbounded<Call>();
         // Deliberately ignores cancellation to simulate stale callbacks from an uncooperative provider.
         public async IAsyncEnumerable<string> StreamAsync(CompletionRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
-            var call = new Call(request, Channel.CreateUnbounded<string>(), new(TaskCreationOptions.RunContinuationsAsynchronously));
+            var call = new Call(request, Channel.CreateUnbounded<string>(), new(TaskCreationOptions.RunContinuationsAsynchronously), cancellationToken);
             Calls.Writer.TryWrite(call);
             try { await foreach (var chunk in call.Chunks.Reader.ReadAllAsync()) yield return chunk; }
             finally { call.Finished.TrySetResult(); }

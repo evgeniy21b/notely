@@ -35,7 +35,18 @@ It does not capture audio, contact cloud APIs, or demonstrate invisibility in a 
 - OpenRouter streaming with timeouts, HTTP and midstream error handling; no automatic repeat
   of a paid generation after a partial answer.
 - Interrupted answers stay visible and are recorded in conversation context. Late callbacks
-  cannot write into a newer request or session. Older conversation is summarized after 12 minutes.
+  cannot write into a newer request or session. Auto turns coalesce for 350 ms; a new auto
+  candidate leaves the current stream running until it actually produces an answer. Exact
+  SKIP sentinels (including Markdown wrappers) and candidate errors preserve the old stream.
+  Only one visible answer and one unconfirmed candidate can run concurrently. This may briefly
+  overlap two paid generations, avoiding a separate classification API call.
+- Microphone PCM is never muted because system audio is active. Short replies/rewordings are
+  kept; only near-verbatim long replay of one interviewer utterance within 3 seconds is dropped.
+  Headphones remain preferable when speaker echo is strong; real echo handling needs PC testing.
+- Older conversation is summarized after 12 minutes. Failed/empty summaries preserve verbatim
+  entries and retry on subsequent activity after 30, 60, 120, 240, then up to 300 seconds.
+- Observer callbacks are serialized outside the state lock; profile/model delegates also run
+  outside it. Pause cancels unconfirmed auto work, while visible/manual answers can finish.
 - Images are resized to a maximum of 2400 pixels on the long edge, JPEG quality 75, and sent
   once. Subsequent requests use the screen description in the model's textual answer.
 - Cursor-monitor screenshot, clipboard image, text input, profile and keyterms, model selection,
