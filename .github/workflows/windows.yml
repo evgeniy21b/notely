@@ -50,4 +50,5 @@ jobs:
           path: |
             windows/artifacts/tests/
             windows/artifacts/smoke-test.json
+            windows/artifacts/overlay-preview.png
           retention-days: 14

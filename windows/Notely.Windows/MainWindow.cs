@@ -153,7 +153,11 @@ internal sealed class MainWindow : Window
         native.Add(Key.P, TogglePause);
         native.Add(Key.Up, () => Scroll(-60)); native.Add(Key.Down, () => Scroll(60));
         native.Add(Key.Left, () => { Width = Math.Max(MinWidth, Width - 80); });
-        native.Add(Key.Right, () => { Width = Math.Min(SystemParameters.VirtualScreenWidth, Width + 80); });
+        native.Add(Key.Right, () =>
+        {
+            var screen = Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle);
+            Width = Math.Max(MinWidth, Math.Min(screen.WorkingArea.Width / VisualTreeHelper.GetDpi(this).DpiScaleX - 20, Width + 80));
+        });
         native.Add(Key.OemPlus, () => ChangeFont(1)); native.Add(Key.OemMinus, () => ChangeFont(-1));
         tray = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "Notely", Visible = true };
         tray.MouseClick += (_, e) => Dispatcher.Invoke(() => { if (e.Button == Forms.MouseButtons.Left) ShowOverlay(); else ShowMenu(); });
@@ -360,7 +364,11 @@ internal sealed class MainWindow : Window
     }
     private void OpenText(string name)
     {
-        try { Paths.Open(Paths.File(name)); }
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("notepad.exe") { UseShellExecute = true };
+            start.ArgumentList.Add(Paths.File(name)); System.Diagnostics.Process.Start(start);
+        }
         catch (Exception) { Report("Не удалось открыть " + name); }
     }
     private void ExportDiagnostics()

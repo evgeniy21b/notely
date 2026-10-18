@@ -15,7 +15,7 @@ internal static class Images
     public static BitmapSource Capture()
     {
         var bounds = Forms.Screen.FromPoint(Forms.Cursor.Position).Bounds;
-        using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+        using var bitmap = new Bitmap(bounds.Width, bounds.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap))
             graphics.CopyFromScreen(bounds.Location, System.Drawing.Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
         var handle = bitmap.GetHbitmap();

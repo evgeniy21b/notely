@@ -9,10 +9,11 @@
     <AssemblyName>Notely</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Version>0.1.0</Version>
+    <!-- WPF owns the process DPI manifest; WinForms is only used for tray/monitor APIs. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Notely.Core/Notely.Core.csproj" />
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
 </Project>

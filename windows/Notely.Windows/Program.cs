@@ -3,6 +3,8 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Notely.Core;
 
 namespace Notely.Windows;
@@ -64,7 +66,12 @@ internal static class Program
             var window = new MainWindow(smoke: true);
             window.Show(); window.UpdateLayout();
             window.SmokeRender("Ответ **жирным** и `код`.\n\n```sql\nSELECT 1;\n```\n| A | B |\n|---|---|\n|1|2|");
-            window.UpdateLayout(); window.Close();
+            window.UpdateLayout();
+            var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(window);
+            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var output = System.IO.File.Create(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(reportPath))!, "overlay-preview.png"))) encoder.Save(output);
+            window.Close();
         });
         Check("audio-decoder", () =>
         {
