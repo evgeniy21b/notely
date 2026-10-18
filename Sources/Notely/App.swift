@@ -180,8 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handle(_ e: Brain.Event) {
         switch e {
         case .thinking: overlay.setStatus("думаю…")
-        case .answer(let t): overlay.setStatus("отвечаю…"); overlay.setAnswer(t)
-        case .done(let t): overlay.setAnswer(t); refreshStatus()
+        case .answer(let t, let startsNew): overlay.setStatus("отвечаю…"); overlay.updateAnswer(t, startsNew: startsNew)
+        case .done: refreshStatus() // последний потоковый .answer уже содержит полный текст
         case .skipped: refreshStatus()
         case .error(let s): overlay.setStatus("ошибка"); overlay.setAnswer("Ошибка: \(s)", dim: true); Log.write("error: \(s)")
         }

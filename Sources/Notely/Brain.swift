@@ -5,7 +5,7 @@ import Foundation
 final class Brain {
     enum Event {
         case thinking
-        case answer(String)
+        case answer(String, startsNew: Bool)
         case done(String)
         case skipped(String)
         case error(String)
@@ -22,7 +22,6 @@ final class Brain {
     private var themBuf = ""
     private var meBuf = ""
     private var unanswered: [String] = []
-    private var lastShot: (time: Date, jpeg: Data)?
     private var summary = ""                 // конспект ранней части сессии
     private var summarizedUpTo = 0           // entries[..<summarizedUpTo] уже в конспекте
     private var summarizing = false
@@ -30,8 +29,13 @@ final class Brain {
     private static let verbatimWindow: TimeInterval = Double(ProcessInfo.processInfo.environment["NOTELY_VERBATIM_SEC"] ?? "") ?? 12 * 60
     private static let minVerbatimEntries = Int(ProcessInfo.processInfo.environment["NOTELY_MIN_VERBATIM"] ?? "") ?? 20
     private var current: Task<Void, Never>?
+    private final class RequestState {
+        var text = ""
+        var hasAnswer = false
+        var recorded = false
+    }
+    private var activeRequest: RequestState?
     private let lock = NSLock()
-    private static let shotTTL: TimeInterval = 600       // скриншот живёт в контексте 10 минут
 
     init(key: String) { self.key = key }
 
@@ -118,8 +122,7 @@ final class Brain {
     func askManual(text: String, image: Data?) {
         lock.lock()
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let image {
-            lastShot = (Date(), image)
+        if image != nil {
             add(.screen, t.isEmpty ? "кандидат снял экран" : "кандидат снял экран и спросил: \(t)")
         } else if !t.isEmpty {
             add(.typed, t)
@@ -196,13 +199,38 @@ final class Brain {
 
     // MARK: запрос
 
+    /// Сохраняем уже показанную часть прерванной подсказки в текстовом контексте.
+    /// Вызывать только под lock.
+    private func recordAnswer(_ request: RequestState, interrupted: Bool) {
+        let text = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard request.hasAnswer, !request.recorded, !text.isEmpty else { return }
+        request.recorded = true
+        add(.hint, String(text.prefix(1500)))
+        if interrupted { Log.write("answer interrupted, kept \(text.count) chars") }
+    }
+
+    /// Завершает запрос, только если он всё ещё текущий. Так отменённый поток не может
+    /// дописать старый ответ поверх более нового.
+    private func finish(_ request: RequestState, record: Bool) -> Bool {
+        lock.withLock {
+            guard activeRequest === request else { return false }
+            if record { recordAnswer(request, interrupted: false) }
+            activeRequest = nil
+            current = nil
+            return true
+        }
+    }
+
     private func ask(auto: Bool, pending: [String], userText: String?, image: Data?) {
         lock.lock()
+        if let activeRequest { recordAnswer(activeRequest, interrupted: true) }
+        let previous = current
+        current = nil
+        let request = RequestState()
+        activeRequest = request
         let (archive, recent) = contextParts()
-        var shot: Data? = image
-        if shot == nil, let ls = lastShot, Date().timeIntervalSince(ls.time) < Self.shotTTL { shot = ls.jpeg }
-        let shotAge = lastShot.map { Int(Date().timeIntervalSince($0.time) / 60) } ?? 0
         lock.unlock()
+        previous?.cancel()
 
         var system = Self.systemPrompt
         let profile = AppPaths.profileText()
@@ -214,10 +242,8 @@ final class Brain {
                           "cache_control": ["type": "ephemeral"]])
         }
         var tail = (archive.isEmpty ? "Разговор с начала сессии:\n" : "Последние минуты разговора дословно:\n") + (recent.isEmpty ? "(пока пусто)" : recent) + "\n\n"
-        if shot != nil {
-            tail += image != nil
-                ? "Ниже — скриншот, который кандидат снял прямо сейчас.\n"
-                : "Ниже — последний скриншот экрана (снят \(shotAge) мин назад). Используй его, если вопрос связан с тем, что было на экране.\n"
+        if image != nil {
+            tail += "Ниже — скриншот, который кандидат снял прямо сейчас.\n"
         }
         if auto {
             tail += "Новые реплики собеседника, на которые ещё не было подсказки:\n«" + pending.joined(separator: " ") + "»\n\n"
@@ -232,8 +258,9 @@ final class Brain {
             tail += "Кандидат пишет тебе: «\(userText ?? "")». Ответь с учётом всего разговора."
         }
         parts.append(["type": "text", "text": tail])
-        if let shot {
-            parts.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + shot.base64EncodedString()]])
+        if let image {
+            // Картинка уходит только в этот запрос. Её описание из ответа затем хранится как .hint.
+            parts.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + image.base64EncodedString()]])
         }
 
         let body: [String: Any] = [
@@ -244,27 +271,36 @@ final class Brain {
             "usage": ["include": true],
             "messages": [["role": "system", "content": system], ["role": "user", "content": parts]],
         ]
-        current?.cancel()
-        current = Task { [weak self] in await self?.stream(body: body, auto: auto) }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.stream(body: body, auto: auto, request: request)
+        }
+        lock.withLock {
+            if activeRequest === request { current = task }
+            else { task.cancel() }
+        }
     }
 
-    private func stream(body: [String: Any], auto: Bool) async {
+    private func stream(body: [String: Any], auto: Bool, request: RequestState) async {
         var req = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         req.httpMethod = "POST"
         req.timeoutInterval = 60
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        if !auto { onEvent?(.thinking) }
+        if !auto, lock.withLock({ activeRequest === request }) { onEvent?(.thinking) }
         let started = Date()
         var text = ""
         var decided = !auto
+        var emittedAnswer = false
         do {
             let (bytes, resp) = try await URLSession.shared.bytes(for: req)
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
                 var err = ""
                 for try await l in bytes.lines { err += l; if err.count > 300 { break } }
-                onEvent?(.error("OpenRouter \(http.statusCode): \(err.prefix(200))"))
+                if finish(request, record: false) {
+                    onEvent?(.error("OpenRouter \(http.statusCode): \(err.prefix(200))"))
+                }
                 return
             }
             for try await line in bytes.lines {
@@ -287,34 +323,44 @@ final class Brain {
                     if head.count < 4 && "SKIP".hasPrefix(head.uppercased()) { continue }
                     if head.uppercased().hasPrefix("SKIP") {
                         Log.write("auto: SKIP")
-                        onEvent?(.skipped(head))
+                        if finish(request, record: false) { onEvent?(.skipped(head)) }
                         return
                     }
                     decided = true
                     Log.write(String(format: "auto: answering, first token %.2fs", Date().timeIntervalSince(started)))
-                    lock.withLock { unanswered.removeAll() }
                 }
-                onEvent?(.answer(text))
+                let isFirst = !emittedAnswer
+                let isActive = lock.withLock {
+                    guard activeRequest === request else { return false }
+                    request.text = text
+                    request.hasAnswer = decided
+                    if isFirst && auto { unanswered.removeAll() }
+                    return true
+                }
+                guard isActive, !Task.isCancelled else { return }
+                onEvent?(.answer(text, startsNew: isFirst))
+                emittedAnswer = true
             }
             if Task.isCancelled { return }
             if decided && !text.isEmpty {
                 Log.write(String(format: "answer done %.2fs", Date().timeIntervalSince(started)))
-                lock.withLock { add(.hint, String(text.prefix(1500))) }
-                onEvent?(.done(text))
+                if finish(request, record: true) { onEvent?(.done(text)) }
             } else if !decided {
-                onEvent?(.skipped(text))
+                if finish(request, record: false) { onEvent?(.skipped(text)) }
             }
         } catch {
             if Task.isCancelled || (error as? URLError)?.code == .cancelled { return }
-            onEvent?(.error(error.localizedDescription))
+            if finish(request, record: false) { onEvent?(.error(error.localizedDescription)) }
         }
     }
 
     func reset() {
         lock.lock()
-        entries.removeAll(); unanswered.removeAll(); recentThem.removeAll(); lastShot = nil; themBuf = ""; meBuf = ""
+        let previous = current
+        current = nil; activeRequest = nil
+        entries.removeAll(); unanswered.removeAll(); recentThem.removeAll(); themBuf = ""; meBuf = ""
         summary = ""; summarizedUpTo = 0
         lock.unlock()
-        current?.cancel()
+        previous?.cancel()
     }
 }

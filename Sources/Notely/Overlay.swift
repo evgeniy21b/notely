@@ -181,16 +181,30 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
 
     func changeFont(_ delta: CGFloat) {
         Settings.fontSize = min(32, max(11, Settings.fontSize + delta))
-        setAnswer(lastText, dim: lastDim)
+        renderAnswer(lastText, dim: lastDim, followNewest: false)
     }
 
     // MARK: содержимое
 
     private var lastText = ""
-    private var lastShown = ""
     private var lastDim = false
+    private var currentPrefix = ""
 
     func setAnswer(_ text: String, dim: Bool = false) {
+        currentPrefix = ""
+        renderAnswer(text, dim: dim, followNewest: false)
+    }
+
+    /// Первый фрагмент новой подсказки добавляет её после предыдущей, следующие
+    /// фрагменты обновляют только текущую часть потока.
+    func updateAnswer(_ text: String, startsNew: Bool) {
+        if startsNew {
+            currentPrefix = !lastDim && !lastText.isEmpty ? lastText + "\n\n" : ""
+        }
+        renderAnswer(currentPrefix + text, dim: false, followNewest: startsNew)
+    }
+
+    private func renderAnswer(_ text: String, dim: Bool, followNewest: Bool) {
         lastText = text; lastDim = dim
         let size = Settings.fontSize
         let color: NSColor = dim ? .secondaryLabelColor : .white
@@ -214,13 +228,17 @@ final class OverlayController: NSObject, NSTextFieldDelegate {
         }
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
         out.addAttribute(.paragraphStyle, value: p, range: NSRange(location: 0, length: out.length))
-        // новый ответ — наверх; дописывание того же ответа — не дёргаем прокрутку
-        let continuing = !lastShown.isEmpty && text.hasPrefix(lastShown)
-        lastShown = text
         let origin = scroll.contentView.bounds.origin
+        let oldDocumentHeight = answerView.bounds.height
+        let wasNearBottom = origin.y + scroll.contentView.bounds.height >= oldDocumentHeight - 24
         answerView.textStorage?.setAttributedString(out)
-        if continuing { scroll.contentView.scroll(to: origin); scroll.reflectScrolledClipView(scroll.contentView) }
-        else { answerView.scrollToBeginningOfDocument(nil) }
+        if let container = answerView.textContainer { answerView.layoutManager?.ensureLayout(for: container) }
+        if followNewest || wasNearBottom {
+            answerView.scrollToEndOfDocument(nil)
+        } else {
+            scroll.contentView.scroll(to: origin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
     }
 
     /// Markdown-таблицы (строки с «|») рисуем выровненным моноширинным блоком, остальное — обычным markdown.
