@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.RegularExpressions;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Notely.Tests")]
+
 namespace Notely.Core;
 
 public enum BrainEventKind { Thinking, Answer, Done, Skipped, Error }
@@ -21,6 +23,7 @@ public sealed class Brain(ICompletionClient client, Func<string> profile, Func<s
     private long session = 1, requestId;
     private RequestState? active;
     private CancellationTokenSource? summaryCancellation;
+    internal Task SummaryWork { get; private set; } = Task.CompletedTask;
     private bool paused, disposed;
     private sealed class RequestState(long id)
     {
@@ -176,7 +179,7 @@ public sealed class Brain(ICompletionClient client, Func<string> profile, Func<s
             "\n\nНовый кусок:\n" + string.Join('\n', entries.Skip(summarizedUpTo).Take(cut - summarizedUpTo).Select(Line));
         var cancellation = new CancellationTokenSource();
         summaryCancellation = cancellation;
-        _ = Task.Run(async () =>
+        SummaryWork = Task.Run(async () =>
         {
             try
             {

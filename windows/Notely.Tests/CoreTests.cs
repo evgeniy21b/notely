@@ -88,12 +88,15 @@ public sealed class CoreTests
     {
         var fake = new ScriptedClient(); using var brain = new Brain(fake, () => "", () => "test");
         var events = new ConcurrentQueue<BrainEvent>(); brain.Changed += events.Enqueue;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        brain.Changed += e => { if (e.Kind == BrainEventKind.Done) done.TrySetResult(); };
         await Task.WhenAll(Task.Run(() => brain.Ask("Ручной вопрос")), Task.Run(() => brain.Speech(true, "Что такое REST API", true)));
         var first = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         var second = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         first.Chunks.Writer.TryWrite("один"); first.Chunks.Writer.TryComplete();
         second.Chunks.Writer.TryWrite("два"); second.Chunks.Writer.TryComplete();
         await first.Finished.Task.WaitAsync(Deadline); await second.Finished.Task.WaitAsync(Deadline);
+        await done.Task.WaitAsync(Deadline);
         Assert.Single(events.Where(e => e.Kind == BrainEventKind.Answer));
         Assert.Single(brain.Snapshot().Where(e => e.Kind == "Твоя подсказка"));
     }
@@ -118,9 +121,10 @@ public sealed class CoreTests
         brain.Speech(false, "ещё запись", true);
         var summary = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         Assert.True(summary.Request.Summary);
+        var summaryWork = brain.SummaryWork;
         brain.Reset();
         summary.Chunks.Writer.TryWrite("ЧУЖОЙ КОНСПЕКТ"); summary.Chunks.Writer.TryComplete();
-        await summary.Finished.Task.WaitAsync(Deadline);
+        await summaryWork.WaitAsync(Deadline);
         brain.Ask("Новая тема"); var next = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         Assert.DoesNotContain("ЧУЖОЙ", next.Request.Context); next.Chunks.Writer.TryComplete();
     }
@@ -140,7 +144,7 @@ public sealed class CoreTests
     public void Profile_comments_including_unclosed_comments_are_not_sent()
     {
         Assert.Equal("", Prompts.CleanProfile(Prompts.ProfileTemplate));
-        Assert.Equal("Факт\n", Prompts.CleanProfile("Факт\n<!--секрет").TrimEnd() + "\n");
+        Assert.Equal("Факт", Prompts.CleanProfile("Факт\n<!--секрет"));
         Assert.DoesNotContain("секрет", Prompts.CleanProfile("# Заголовок\nФакт <!--секрет-->"));
         Assert.Equal(new[] { "SQL", "JOIN" }, Prompts.ParseKeyterms("# comment\nSQL\nsql\n\n JOIN\r\n"));
     }
