@@ -20,6 +20,7 @@ internal sealed class MainWindow : Window
     private readonly TextBlock status = new() { Text = "запуск…", Foreground = Brushes.LightGray, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock audioStatus = new() { Foreground = Brushes.LightGray, FontSize = 11, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock audioWarning = new() { Foreground = Brushes.Orange, FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private readonly TextBlock captureWarning = new() { Foreground = Brushes.Orange, FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly Ellipse themDot = Dot(), meDot = Dot();
     private readonly RichTextBox answer = new() { IsReadOnly = true, IsDocumentEnabled = true, Background = Brushes.Transparent,
         BorderThickness = new Thickness(0), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -95,6 +96,7 @@ internal sealed class MainWindow : Window
         dots.Children.Add(themDot); dots.Children.Add(meDot);
         DockPanel.SetDock(dots, Dock.Left); top.Children.Add(dots); top.Children.Add(status);
         DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
+        DockPanel.SetDock(captureWarning, Dock.Top); root.Children.Add(captureWarning);
 
         var bottom = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 5, 0, 0) };
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
@@ -119,6 +121,12 @@ internal sealed class MainWindow : Window
         Label("Ключ OpenRouter (пусто — сохранить прежний)"); stack.Children.Add(openrouterKey);
         Label("Звук собеседника: выберите тот же выход, что и в Zoom / Meet / Telemost"); stack.Children.Add(outputDevice);
         Label("Микрофон"); stack.Children.Add(inputDevice);
+        foreach (var box in new[] { outputDevice, inputDevice })
+            box.DropDownOpened += (_, _) =>
+            {
+                if (box.Template.FindName("PART_Popup", box) is System.Windows.Controls.Primitives.Popup popup && popup.Child is { } child)
+                    NativeWindow.ProtectPopup(child);
+            };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 6) };
         buttons.Children.Add(Button("Сохранить и начать разговор", () => Run(SaveSettingsAsync)));
         buttons.Children.Add(Button("Закрыть", () => settingsPanel.Visibility = Visibility.Collapsed)); stack.Children.Add(buttons);
@@ -162,7 +170,11 @@ internal sealed class MainWindow : Window
         tray = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "Notely", Visible = true };
         tray.MouseClick += (_, e) => Dispatcher.Invoke(() => { if (e.Button == Forms.MouseButtons.Left) ShowOverlay(); else ShowMenu(); });
         if (native.HotkeyErrors.Count > 0) Report(string.Join("; ", native.HotkeyErrors));
-        if (!native.CaptureExcluded) Report(native.ProtectionStatus);
+        if (!native.CaptureExcluded)
+        {
+            captureWarning.Text = native.ProtectionStatus;
+            captureWarning.Visibility = Visibility.Visible;
+        }
     }
 
     private void ShowMenu()
@@ -180,6 +192,10 @@ internal sealed class MainWindow : Window
             item.Click += (_, _) => { settings.Model = model.Id; SaveGeometry(); RefreshStatus(); }; models.Items.Add(item);
         }
         menu.Items.Add(models);
+        models.SubmenuOpened += (_, _) =>
+        {
+            if (models.Items.Count > 0 && models.Items[0] is MenuItem first) NativeWindow.ProtectPopup(first);
+        };
         Add("Профиль (резюме, вакансия)", () => OpenText("profile.md"));
         Add("Словарь распознавания", () => OpenText("keyterms.txt"));
         Add("Настройки ключей и звука", OpenSettings);
@@ -274,7 +290,7 @@ internal sealed class MainWindow : Window
         }
     }
     private void RefreshStatus() => status.Text = brain?.Paused == true ? "пауза" : "слушаю · " + settings.Model.Split('/').Last();
-    public void Report(string message) { status.Text = message; status.ToolTip = message; }
+    public void Report(string message) { status.Text = message; }
     private void SetText(string text) { shown = ""; prefix = ""; answer.Document = Markdown.Render(text, settings.FontSize); }
     internal void SmokeRender(string text) { shown = text; Render(true); }
     private void Render(bool follow)

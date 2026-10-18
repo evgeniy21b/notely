@@ -33,6 +33,11 @@ internal sealed class NativeWindow : IDisposable
         if (RegisterHotKey(handle, id, 0x0001 | 0x0002 | 0x4000, (uint)KeyInterop.VirtualKeyFromKey(key))) handlers[id] = handler;
         else HotkeyErrors.Add($"Ctrl+Alt+{key}: занято другой программой");
     }
+    internal static void ProtectPopup(System.Windows.Media.Visual visual)
+    {
+        if (PresentationSource.FromVisual(visual) is HwndSource popup)
+            SetWindowDisplayAffinity(popup.Handle, 0x11);
+    }
     private nint Hook(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
     {
         if (msg == 0x0312 && handlers.TryGetValue((int)wparam, out var action)) { action(); handled = true; }
