@@ -82,7 +82,7 @@ public static class Prompts
     public static string CleanProfile(string text)
     {
         // An unfinished comment must not accidentally expose private template notes.
-        var clean = System.Text.RegularExpressions.Regex.Replace(text, @"<!--[\s\S]*?(?:-->|\z)", "");
+        var clean = global::System.Text.RegularExpressions.Regex.Replace(text, @"<!--[\s\S]*?(?:-->|\z)", "");
         return clean.Split('\n').Any(l => l.Trim().Length > 0 && !l.TrimStart().StartsWith('#'))
             ? clean.Trim() : "";
     }

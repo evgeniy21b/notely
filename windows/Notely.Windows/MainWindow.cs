@@ -19,6 +19,7 @@ internal sealed class MainWindow : Window
     private readonly Settings settings = Settings.Load();
     private readonly TextBlock status = new() { Text = "запуск…", Foreground = Brushes.LightGray, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock audioStatus = new() { Foreground = Brushes.LightGray, FontSize = 11, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock audioWarning = new() { Foreground = Brushes.Orange, FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly Ellipse themDot = Dot(), meDot = Dot();
     private readonly RichTextBox answer = new() { IsReadOnly = true, IsDocumentEnabled = true, Background = Brushes.Transparent,
         BorderThickness = new Thickness(0), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -36,6 +37,7 @@ internal sealed class MainWindow : Window
     private ListeningSession? listening;
     private ApiKeys? keys;
     private BitmapSource? attachment;
+    private byte[]? attachmentJpeg;
     private string shown = "", prefix = "";
     private bool closing, busyScreenshot;
     private readonly bool smoke;
@@ -102,6 +104,7 @@ internal sealed class MainWindow : Window
         DockPanel.SetDock(thumbnail, Dock.Left); bottom.Children.Add(thumbnail); bottom.Children.Add(input);
         input.PreviewMouseLeftButtonDown += (_, _) => { Activate(); input.Focus(); };
         DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
+        DockPanel.SetDock(audioWarning, Dock.Bottom); root.Children.Add(audioWarning);
 
         settingsPanel.Child = BuildSettings();
         DockPanel.SetDock(settingsPanel, Dock.Top); root.Children.Add(settingsPanel);
@@ -241,7 +244,14 @@ internal sealed class MainWindow : Window
             listening = session;
             session.Level += (output, value) => Dispatcher.BeginInvoke(() =>
             { if (listening == session && !closing) { if (output) themLevel = Math.Max(themLevel, value); else meLevel = Math.Max(meLevel, value); } });
-            session.Status += text => Dispatcher.BeginInvoke(() => { if (listening == session && !closing) { audioStatus.Text = text; status.ToolTip = text; } });
+            session.Status += text => Dispatcher.BeginInvoke(() =>
+            {
+                if (listening != session || closing) return;
+                audioStatus.Text = text;
+                var warnings = text.Split('\n').Where(s => s.Contains("недоступно") || s.Contains("нет связи"));
+                audioWarning.Text = string.Join(" · ", warnings);
+                audioWarning.Visibility = audioWarning.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            });
             session.Start(); RefreshStatus();
         }
         finally { restartGate.Release(); }
@@ -301,16 +311,19 @@ internal sealed class MainWindow : Window
     {
         if (image is null) return;
         // Normalize immediately so even clipboard images have a bounded payload.
-        _ = Images.Jpeg(image);
-        attachment = image; thumbnail.Source = image; thumbnail.Visibility = Visibility.Visible; FocusInput();
+        attachmentJpeg = Images.Jpeg(image);
+        using var stream = new MemoryStream(attachmentJpeg);
+        var normalized = new BitmapImage(); normalized.BeginInit(); normalized.CacheOption = BitmapCacheOption.OnLoad;
+        normalized.StreamSource = stream; normalized.EndInit(); normalized.Freeze();
+        attachment = normalized; thumbnail.Source = normalized; thumbnail.Visibility = Visibility.Visible; FocusInput();
     }
-    private void ClearImage() { attachment = null; thumbnail.Source = null; thumbnail.Visibility = Visibility.Collapsed; }
+    private void ClearImage() { attachment = null; attachmentJpeg = null; thumbnail.Source = null; thumbnail.Visibility = Visibility.Collapsed; }
     private void Send()
     {
         if (brain is null) { OpenSettings(); return; }
         try
         {
-            brain.Ask(input.Text, attachment is null ? null : Images.Jpeg(attachment));
+            brain.Ask(input.Text, attachmentJpeg);
             input.Clear(); ClearImage();
         }
         catch (Exception e) { Report(e.Message); }

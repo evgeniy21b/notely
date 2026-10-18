@@ -32,8 +32,13 @@ public sealed class Brain(ICompletionClient client, Func<string> profile, Func<s
 
     public event Action<BrainEvent>? Changed;
     public long Session { get { lock (gate) return session; } }
-    public bool Paused { get { lock (gate) return paused; } set { lock (gate) paused = value; } }
+    public bool Paused
+    {
+        get { lock (gate) return paused; }
+        set { lock (gate) { paused = value; themBuffer.Clear(); meBuffer.Clear(); } }
+    }
     public ContextEntry[] Snapshot() { lock (gate) return entries.ToArray(); }
+    public void DiscardSpeechBuffer(bool them) { lock (gate) (them ? themBuffer : meBuffer).Clear(); }
 
     public void Speech(bool them, string text, bool end)
     {

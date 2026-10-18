@@ -235,6 +235,18 @@ public sealed class CoreTests
         Assert.All(new PcmEncoder(44100, 1, 16, false).Convert(new byte[88200]).Data, b => Assert.Equal(0, b));
     }
 
+    [Fact]
+    public void Loopback_silence_ends_a_turn_without_double_feeding_active_audio()
+    {
+        var clock = new ManualClock(); var silence = new LoopbackSilence(clock);
+        silence.AudioArrived(); Assert.Null(silence.Poll());
+        clock.Now += TimeSpan.FromMilliseconds(199); Assert.Null(silence.Poll());
+        clock.Now += TimeSpan.FromMilliseconds(1); Assert.Equal(3200, silence.Poll()!.Length);
+        Assert.Null(silence.Poll()); clock.Now += TimeSpan.FromMilliseconds(100);
+        Assert.Equal(3200, silence.Poll()!.Length);
+        silence.AudioArrived(); clock.Now += TimeSpan.FromMilliseconds(100); Assert.Null(silence.Poll());
+    }
+
     [Theory] [InlineData(16)] [InlineData(24)] [InlineData(32)]
     public void Integer_pcm_formats_support_positive_and_negative_full_scale(int bits)
     {
