@@ -5,10 +5,10 @@ using System.Threading.Channels;
 
 namespace Notely.Core;
 
-public sealed record SpeechResult(string Text, bool End);
+public sealed record SpeechResult(string Text, bool End, bool Started = false);
 public static class DeepgramProtocol
 {
-    public static Uri Url(IEnumerable<string> keyterms) => new("wss://api.deepgram.com/v1/listen?model=nova-3&language=ru&encoding=linear16&sample_rate=16000&channels=1&punctuate=true&smart_format=true&interim_results=true&endpointing=400&utterance_end_ms=1200&vad_events=true" +
+    public static Uri Url(IEnumerable<string> keyterms) => new("wss://api.deepgram.com/v1/listen?model=nova-3&language=ru&encoding=linear16&sample_rate=16000&channels=1&punctuate=true&smart_format=true&interim_results=true&endpointing=400&utterance_end_ms=1000&vad_events=true" +
         string.Concat(keyterms.Select(t => "&keyterm=" + Uri.EscapeDataString(t))));
 
     public static SpeechResult? Parse(string json)
@@ -20,13 +20,21 @@ public static class DeepgramProtocol
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("type", out var type)) return null;
             if (type.ValueKind != JsonValueKind.String) return null;
             if (type.GetString() == "Error") throw new IOException("Deepgram: ошибка распознавания, проверьте ключ и баланс");
-            if (type.GetString() == "UtteranceEnd") return new("", true);
-            if (type.GetString() != "Results" || !root.TryGetProperty("is_final", out var final) || final.ValueKind != JsonValueKind.True) return null;
+            if (type.GetString() == "SpeechStarted") return new("", false, Started: true);
+            if (type.GetString() == "UtteranceEnd")
+            {
+                if (root.TryGetProperty("last_word_end", out var last) &&
+                    (last.ValueKind != JsonValueKind.Number || !last.TryGetDouble(out var seconds) || !double.IsFinite(seconds) || seconds < 0)) return null;
+                return new("", true);
+            }
+            if (type.GetString() != "Results" || !root.TryGetProperty("is_final", out var final) || final.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return null;
             var end = root.TryGetProperty("speech_final", out var sf) && sf.ValueKind == JsonValueKind.True;
             if (!root.TryGetProperty("channel", out var ch) || ch.ValueKind != JsonValueKind.Object ||
                 !ch.TryGetProperty("alternatives", out var alts) || alts.ValueKind != JsonValueKind.Array || alts.GetArrayLength() == 0 ||
                 alts[0].ValueKind != JsonValueKind.Object || !alts[0].TryGetProperty("transcript", out var transcript) || transcript.ValueKind != JsonValueKind.String) return null;
             var text = transcript.GetString() ?? "";
+            // Interim words are unstable: signal resumed speech without adding them to context.
+            if (final.ValueKind == JsonValueKind.False) return string.IsNullOrWhiteSpace(text) ? null : new("", false, Started: true);
             return text.Length > 0 || end ? new(text, end) : null;
         }
         catch (JsonException) { return null; }

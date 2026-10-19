@@ -71,9 +71,22 @@ internal static class Paths
     public static void Open(string path) => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
 }
 
-internal sealed record ApiKeys(string Deepgram, string OpenRouter);
+internal sealed record ApiKeys(string Deepgram, string OpenRouter)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Complete => !string.IsNullOrWhiteSpace(Deepgram) && !string.IsNullOrWhiteSpace(OpenRouter);
+}
 internal static class Secrets
 {
+    public static ApiKeys? Merge(ApiKeys? previous, string deepgram, string openRouter)
+    {
+        deepgram = deepgram.Trim(); openRouter = openRouter.Trim();
+        if (deepgram.ContainsAnyLineBreak() || openRouter.ContainsAnyLineBreak())
+            throw new ArgumentException("API-ключ должен быть одной строкой.");
+        if (deepgram.Length == 0) deepgram = previous?.Deepgram ?? "";
+        if (openRouter.Length == 0) openRouter = previous?.OpenRouter ?? "";
+        return deepgram.Length == 0 && openRouter.Length == 0 ? null : new(deepgram, openRouter);
+    }
     public static ApiKeys? Load()
     {
         try
@@ -83,7 +96,7 @@ internal static class Secrets
             try
             {
                 var keys = JsonSerializer.Deserialize<ApiKeys>(bytes);
-                return !string.IsNullOrWhiteSpace(keys?.Deepgram) && !string.IsNullOrWhiteSpace(keys.OpenRouter) ? keys : null;
+                return keys is null ? null : Merge(null, keys.Deepgram ?? "", keys.OpenRouter ?? "");
             }
             finally { CryptographicOperations.ZeroMemory(bytes); }
         }
@@ -91,6 +104,7 @@ internal static class Secrets
     }
     public static void Save(ApiKeys keys)
     {
+        keys = Merge(null, keys.Deepgram, keys.OpenRouter) ?? throw new ArgumentException("Нет ключей для сохранения.");
         var bytes = JsonSerializer.SerializeToUtf8Bytes(keys);
         try
         {
@@ -101,6 +115,8 @@ internal static class Secrets
         }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
+
+    private static bool ContainsAnyLineBreak(this string value) => value.IndexOfAny(['\r', '\n', '\0']) >= 0;
 }
 
 internal static class Log

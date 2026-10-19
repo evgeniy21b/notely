@@ -21,6 +21,10 @@ the network tests use scripted providers and fake HTTP responses.
 
 The packaged-executable smoke test exercises DPAPI, settings persistence, WPF window
 creation, markdown rendering, PCM conversion, and the capture-exclusion Win32 contract.
+It also tests individual key edits, blank fields, immediate close, autosave and a fresh
+process reading both keys; corrupt storage/write failures; window bounds/non-activating
+restore; hotkey registration/collision and background message routing; screenshot capture
+and automatic submission to a fake AI. It does not simulate physical mouse/key gestures.
 It writes dummy credentials into its own fresh temporary directory, never the user's data.
 It does not capture audio, contact cloud APIs, or demonstrate invisibility in a video call.
 
@@ -35,7 +39,9 @@ It does not capture audio, contact cloud APIs, or demonstrate invisibility in a 
 - OpenRouter streaming with timeouts, HTTP and midstream error handling; no automatic repeat
   of a paid generation after a partial answer.
 - Interrupted answers stay visible and are recorded in conversation context. Late callbacks
-  cannot write into a newer request or session. Auto turns coalesce for 350 ms; a new auto
+  cannot write into a newer request or session. Auto turns coalesce for 150 ms; resumed
+  speech (VAD/interim signals) cancels pending auto work without storing unstable words.
+  Deepgram endpointing stays at 400 ms, with a 1000 ms UtteranceEnd fallback. A new auto
   candidate leaves the current stream running until it actually produces an answer. Exact
   SKIP sentinels (including Markdown wrappers) and candidate errors preserve the old stream.
   Only one visible answer and one unconfirmed candidate can run concurrently. This may briefly
@@ -51,11 +57,20 @@ It does not capture audio, contact cloud APIs, or demonstrate invisibility in a 
   once. Subsequent requests use the screen description in the model's textual answer.
 - Cursor-monitor screenshot, clipboard image, text input, profile and keyterms, model selection,
   font/width controls, scrolling history, pause, new conversation, tray and global hotkeys.
+- The Screenshot button, menu and global Ctrl+Alt+S all capture and immediately submit via
+  the existing image/text send path. Registration conflicts remain visible in the overlay.
+- A larger dedicated drag bar leaves edge/corner resizing intact. Movement, resize, restore,
+  and display changes constrain the whole overlay to the current monitor's working area,
+  using physical-pixel bounds (including negative-coordinate monitors). Maximizing this
+  non-activating overlay is disabled; hidden/maximized state is normalized before showing.
 - WDA_EXCLUDEFROMCAPTURE on the overlay, settings in the same protected window. Notely's tray
   icon/process name remain normal. Capture exclusion is best effort and requires a second-device
   test in the exact conferencing app/version.
 - Per-user DPAPI credentials; settings/profile under `%LOCALAPPDATA%\Notely`. Logs omit transcript,
   responses, image data, profile and credentials. Diagnostic export includes device names.
+- Key edits autosave after 600 ms and flush when settings/the application close. Both keys
+  are saved independently; blank fields preserve existing values. The existing encrypted
+  `keys.dat` format is reused. No cloud service is contacted to save keys.
 
 ## Evidence still required from physical Windows
 

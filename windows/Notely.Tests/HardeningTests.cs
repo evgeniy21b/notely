@@ -15,10 +15,10 @@ public sealed partial class CoreTests
         brain.Speech(true, "Расскажите пожалуйста про индексы", true);
         var firstWork = brain.AutoWork;
         await brain.AutoDelayReady.WaitAsync(Deadline);
-        clock.Advance(TimeSpan.FromMilliseconds(200));
+        clock.Advance(TimeSpan.FromMilliseconds(100));
         brain.Speech(true, "И когда они замедляют запись", true);
         await brain.AutoDelayReady.WaitAsync(Deadline);
-        clock.Advance(TimeSpan.FromMilliseconds(349));
+        clock.Advance(TimeSpan.FromMilliseconds(149));
         Assert.False(fake.Calls.Reader.TryRead(out _));
         clock.Advance(TimeSpan.FromMilliseconds(1));
         var call = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
@@ -76,11 +76,11 @@ public sealed partial class CoreTests
         brain.Ask("Первый вопрос"); var first = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         first.Chunks.Writer.TryWrite("Первый ответ"); await Next(events.Reader, BrainEventKind.Answer);
         brain.Speech(true, "Первое уточнение про индексы", true);
-        await brain.AutoDelayReady.WaitAsync(Deadline); clock.Advance(TimeSpan.FromMilliseconds(350));
+        await brain.AutoDelayReady.WaitAsync(Deadline); clock.Advance(TimeSpan.FromMilliseconds(150));
         var stale = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         var staleWork = brain.AutoWork;
         brain.Speech(true, "Второе уточнение про запись", true);
-        await brain.AutoDelayReady.WaitAsync(Deadline); clock.Advance(TimeSpan.FromMilliseconds(350));
+        await brain.AutoDelayReady.WaitAsync(Deadline); clock.Advance(TimeSpan.FromMilliseconds(150));
         var latest = await fake.Calls.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
         stale.Chunks.Writer.TryWrite("ЗАПОЗДАЛЫЙ ОТВЕТ"); stale.Chunks.Writer.TryComplete();
         await staleWork.WaitAsync(Deadline);

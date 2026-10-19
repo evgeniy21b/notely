@@ -15,6 +15,11 @@ internal static class Program
     public static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--smoke-test") return Smoke(args.Length > 1 ? args[1] : "smoke-test.json");
+        if (args.Length == 2 && args[0] == "--check-saved-keys")
+        {
+            try { return RegressionChecks.VerifyRestart(args[1]); }
+            catch (Exception) { return 1; }
+        }
         using var mutex = new Mutex(true, "Local\\Notely.Windows", out var first);
         if (!first) return 0;
         try
@@ -44,7 +49,7 @@ internal static class Program
         void Check(string name, Action test)
         {
             try { test(); report[name] = "PASS"; }
-            catch (Exception e) { report[name] = e.GetType().Name; failed = true; }
+            catch (Exception e) { report[name] = e.GetType().Name + ": " + e.Message; failed = true; }
         }
         Paths.UseTestDirectory(Path.Combine(Path.GetTempPath(), "Notely-smoke-" + Guid.NewGuid().ToString("N")));
         Check("storage", () => { Paths.Ensure(); var settings = Settings.Load(); settings.Save(); });
@@ -54,6 +59,10 @@ internal static class Program
             if (Secrets.Load()?.Deepgram != "smoke-dummy-deepgram") throw new IOException();
         });
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        Check("keys-edit-close-autosave-restart", RegressionChecks.Keys);
+        Check("window-bounds-and-nonactivating-restore", RegressionChecks.Window);
+        Check("global-hotkey-registration-and-background-route", RegressionChecks.Hotkey);
+        Check("screenshot-auto-send", RegressionChecks.Screenshot);
         Check("window-and-capture-exclusion", () =>
         {
             var window = new Window { Width = 420, Height = 220, ShowInTaskbar = false };

@@ -58,6 +58,14 @@ public sealed class Brain(ICompletionClient client, Func<string> profile, Func<s
     }
     public ContextEntry[] Snapshot() { lock (gate) return entries.ToArray(); }
     public void DiscardSpeechBuffer(bool them) { lock (gate) (them ? themBuffer : meBuffer).Clear(); }
+    public void SpeechStarted()
+    {
+        lock (gate)
+        {
+            if (disposed || paused) return;
+            Cancel(candidate?.Cancellation); candidate = null;
+        }
+    }
 
     public void Speech(bool them, string text, bool end)
     {
@@ -74,7 +82,11 @@ public sealed class Brain(ICompletionClient client, Func<string> profile, Func<s
             if (buffer.Length > 20_000) buffer.Remove(0, buffer.Length - 20_000);
             if (!end) return;
             var final = buffer.ToString().Trim(); buffer.Clear();
-            if (final.Length == 0) return;
+            if (final.Length == 0)
+            {
+                if (them && pending.Count > 0 && candidate is null) Start(true, "", null);
+                return;
+            }
             var now = clock.GetUtcNow();
             recentThem.RemoveAll(x => now - x.Time > TimeSpan.FromSeconds(3));
             var words = Words(final);
@@ -149,7 +161,7 @@ public sealed class Brain(ICompletionClient client, Func<string> profile, Func<s
         {
             if (request.Auto)
             {
-                var delay = Task.Delay(TimeSpan.FromMilliseconds(350), clock, request.Cancellation.Token);
+                var delay = Task.Delay(TimeSpan.FromMilliseconds(150), clock, request.Cancellation.Token);
                 request.DelayReady.TrySetResult();
                 await delay;
             }

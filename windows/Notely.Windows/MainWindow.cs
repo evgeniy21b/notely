@@ -44,10 +44,12 @@ internal sealed class MainWindow : Window
     private readonly bool smoke;
     private float themLevel, meLevel;
     private readonly DispatcherTimer levels = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private readonly DispatcherTimer saveKeys = new() { Interval = TimeSpan.FromMilliseconds(600) };
 
     public MainWindow(bool smoke = false)
     {
         this.smoke = smoke;
+        keys = Secrets.Load();
         Title = "Notely"; Width = settings.Width; Height = settings.Height;
         MinWidth = 420; MinHeight = 180; Topmost = true; ShowInTaskbar = false; ShowActivated = false;
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.CanResizeWithGrip;
@@ -55,14 +57,18 @@ internal sealed class MainWindow : Window
         FontFamily = new FontFamily("Segoe UI");
         Build(); RestorePosition();
         SourceInitialized += (_, _) => InitializeNative();
+        LocationChanged += (_, _) => native?.Constrain();
+        SizeChanged += (_, _) => native?.Constrain();
         IsVisibleChanged += (_, _) => { if (IsVisible) native?.Protect(); };
         Loaded += async (_, _) =>
         {
             if (smoke) return;
-            keys = Secrets.Load();
-            if (keys is null) { OpenSettings(); Report("Введите ключи Deepgram и OpenRouter в настройках"); }
+            if (keys?.Complete != true) { OpenSettings(); Report("Введите ключи Deepgram и OpenRouter в настройках"); }
             else await RestartAsync(true);
         };
+        saveKeys.Tick += (_, _) => { saveKeys.Stop(); PersistKeys(); };
+        foreach (var box in new[] { deepgramKey, openrouterKey })
+            box.PasswordChanged += (_, _) => { saveKeys.Stop(); saveKeys.Start(); };
         PreviewKeyDown += OnKey;
         PreviewMouseLeftButtonDown += (_, _) => { if (settingsPanel.Visibility == Visibility.Visible) Activate(); };
         Closing += OnClosing;
@@ -85,9 +91,17 @@ internal sealed class MainWindow : Window
     private void Build()
     {
         var root = new DockPanel { Margin = new Thickness(10) }; Content = root;
-        var top = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 5) };
-        top.MouseLeftButtonDown += (_, e) => { if (e.OriginalSource is TextBlock or DockPanel) { try { DragMove(); } catch (InvalidOperationException) { } } };
+        var top = new DockPanel { LastChildFill = true };
+        var titleBar = new Border { Child = top, Height = 36, Padding = new Thickness(4), Background = Brushes.Transparent,
+            Margin = new Thickness(0, 0, 0, 5), Cursor = Cursors.SizeAll, ToolTip = "Перетащите эту панель, чтобы переместить окно. Края и углы — размер." };
+        titleBar.MouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true;
+            if (e.ClickCount == 1) { try { DragMove(); } catch (InvalidOperationException) { } }
+            native?.Constrain();
+        };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+        buttons.Cursor = Cursors.Arrow;
         buttons.Children.Add(Button("⋯", ShowMenu));
         buttons.Children.Add(Button("—", Hide));
         buttons.Children.Add(Button("×", Close));
@@ -95,12 +109,14 @@ internal sealed class MainWindow : Window
         var dots = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 5, 0) };
         dots.Children.Add(themDot); dots.Children.Add(meDot);
         DockPanel.SetDock(dots, Dock.Left); top.Children.Add(dots); top.Children.Add(status);
-        DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
+        DockPanel.SetDock(titleBar, Dock.Top); root.Children.Add(titleBar);
         DockPanel.SetDock(captureWarning, Dock.Top); root.Children.Add(captureWarning);
 
         var bottom = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 5, 0, 0) };
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
-        actions.Children.Add(Button("Скрин", () => Run(() => ScreenshotAsync(false))));
+        var screenshot = Button("Скрин", () => Run(ScreenshotAsync));
+        screenshot.ToolTip = "Снять экран и сразу отправить · Ctrl+Alt+S (работает без фокуса)";
+        actions.Children.Add(screenshot);
         actions.Children.Add(Button("Отправить", Send));
         DockPanel.SetDock(actions, Dock.Right); bottom.Children.Add(actions);
         DockPanel.SetDock(thumbnail, Dock.Left); bottom.Children.Add(thumbnail); bottom.Children.Add(input);
@@ -129,7 +145,7 @@ internal sealed class MainWindow : Window
             };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 6) };
         buttons.Children.Add(Button("Сохранить и начать разговор", () => Run(SaveSettingsAsync)));
-        buttons.Children.Add(Button("Закрыть", () => settingsPanel.Visibility = Visibility.Collapsed)); stack.Children.Add(buttons);
+        buttons.Children.Add(Button("Закрыть", CloseSettings)); stack.Children.Add(buttons);
         stack.Children.Add(settingsMessage); stack.Children.Add(audioStatus);
         return new ScrollViewer { Content = stack, MaxHeight = 340, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     }
@@ -154,10 +170,11 @@ internal sealed class MainWindow : Window
     private void InitializeNative()
     {
         native = new NativeWindow(this);
+        native.Constrain();
         if (smoke) return;
         native.Add(Key.Space, () => { if (IsVisible) Hide(); else ShowOverlay(); });
         native.Add(Key.I, FocusInput);
-        native.Add(Key.S, () => Run(() => ScreenshotAsync(true)));
+        native.Add(Key.S, () => Run(ScreenshotAsync));
         native.Add(Key.P, TogglePause);
         native.Add(Key.Up, () => Scroll(-60)); native.Add(Key.Down, () => Scroll(60));
         native.Add(Key.Left, () => { Width = Math.Max(MinWidth, Width - 80); });
@@ -169,10 +186,9 @@ internal sealed class MainWindow : Window
         native.Add(Key.OemPlus, () => ChangeFont(1)); native.Add(Key.OemMinus, () => ChangeFont(-1));
         tray = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "Notely", Visible = true };
         tray.MouseClick += (_, e) => Dispatcher.Invoke(() => { if (e.Button == Forms.MouseButtons.Left) ShowOverlay(); else ShowMenu(); });
-        if (native.HotkeyErrors.Count > 0) Report(string.Join("; ", native.HotkeyErrors));
-        if (!native.CaptureExcluded)
+        if (native.HotkeyErrors.Count > 0 || !native.CaptureExcluded)
         {
-            captureWarning.Text = native.ProtectionStatus;
+            captureWarning.Text = string.Join("\n", native.HotkeyErrors.Concat(native.CaptureExcluded ? [] : new[] { native.ProtectionStatus }));
             captureWarning.Visibility = Visibility.Visible;
         }
     }
@@ -185,6 +201,7 @@ internal sealed class MainWindow : Window
         Add("Показать / скрыть · Ctrl+Alt+Space", () => { if (IsVisible) Hide(); else ShowOverlay(); });
         Add(brain?.Paused == true ? "Продолжить · Ctrl+Alt+P" : "Пауза · Ctrl+Alt+P", TogglePause);
         Add("Новый разговор", () => Run(() => RestartAsync(true)));
+        Add("Скриншот и ответ · Ctrl+Alt+S", () => Run(ScreenshotAsync));
         var models = new MenuItem { Header = "Модель" };
         foreach (var model in Settings.Models)
         {
@@ -215,6 +232,7 @@ internal sealed class MainWindow : Window
     private void OpenSettings()
     {
         ShowOverlay(); Height = Math.Max(Height, 540);
+        native?.Constrain();
         foreach (var (box, output, selection) in new[] { (outputDevice, true, settings.OutputDevice), (inputDevice, false, settings.InputDevice) })
         {
             try
@@ -225,23 +243,38 @@ internal sealed class MainWindow : Window
             }
             catch (Exception) { box.ItemsSource = new[] { new AudioDevice("", "Нет доступных устройств") }; box.SelectedIndex = 0; }
         }
-        settingsMessage.Text = (keys is null ? "Введите оба ключа." : "Ключи сохранены для текущего пользователя Windows.") + "\n" + native?.ProtectionStatus;
+        ShowKeyStatus();
         settingsPanel.Visibility = Visibility.Visible;
     }
     private async Task SaveSettingsAsync()
     {
-        var dg = deepgramKey.Password.Trim(); var or = openrouterKey.Password.Trim();
-        if (dg.Length == 0) dg = keys?.Deepgram ?? "";
-        if (or.Length == 0) or = keys?.OpenRouter ?? "";
-        if (dg.Length == 0 || or.Length == 0 || dg.Contains('\n') || or.Contains('\n'))
-        { settingsMessage.Text = "Нужны оба API-ключа одной строкой."; return; }
-        var next = new ApiKeys(dg, or); Secrets.Save(next); keys = next;
+        if (!PersistKeys()) return;
+        if (keys?.Complete != true) { settingsMessage.Text = "Нужны оба API-ключа одной строкой."; return; }
         deepgramKey.Clear(); openrouterKey.Clear();
         settings.OutputDevice = outputDevice.SelectedValue as string ?? "";
         settings.InputDevice = inputDevice.SelectedValue as string ?? "";
         SaveGeometry(); settingsPanel.Visibility = Visibility.Collapsed;
         await RestartAsync(true);
     }
+    private void ShowKeyStatus() => settingsMessage.Text =
+        $"Deepgram: {(string.IsNullOrEmpty(keys?.Deepgram) ? "не введён" : "сохранён")}; OpenRouter: {(string.IsNullOrEmpty(keys?.OpenRouter) ? "не введён" : "сохранён")}.\n" +
+        "Ключи сохраняются автоматически для текущего пользователя Windows. Пустое поле не удаляет сохранённый ключ.\n" + native?.ProtectionStatus;
+    private bool PersistKeys()
+    {
+        saveKeys.Stop();
+        try
+        {
+            var next = Secrets.Merge(keys, deepgramKey.Password, openrouterKey.Password);
+            if (next is not null && next != keys) { Secrets.Save(next); keys = next; }
+            ShowKeyStatus(); return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or ArgumentException)
+        {
+            settingsMessage.Text = "Не удалось сохранить ключи. Проверьте, что ключи одной строкой и папка %LOCALAPPDATA%\\Notely доступна для записи.";
+            Log.Write("keys-save", e.GetType().Name); return false;
+        }
+    }
+    private void CloseSettings() { if (PersistKeys()) settingsPanel.Visibility = Visibility.Collapsed; }
 
     private async Task RestartAsync(bool clear)
     {
@@ -252,7 +285,7 @@ internal sealed class MainWindow : Window
             if (clear) { brain?.Reset(); SetText("Контекст очищен. Слушаю."); }
             status.Text = "перезапускаю звук…";
             if (listening is not null) { var old = listening; listening = null; await old.DisposeAsync(); }
-            if (closing || keys is null) return;
+            if (closing || keys?.Complete != true) return;
             if (brain is null || clear)
             {
                 brain?.Dispose();
@@ -293,6 +326,13 @@ internal sealed class MainWindow : Window
     public void Report(string message) { status.Text = message; }
     private void SetText(string text) { shown = ""; prefix = ""; answer.Document = Markdown.Render(text, settings.FontSize); }
     internal void SmokeRender(string text) { shown = text; Render(true); }
+    internal void SmokeEditKeys(string dg, string or) { deepgramKey.Password = dg; openrouterKey.Password = or; }
+    internal void SmokeCloseSettings() => CloseSettings();
+    internal Task SmokeScreenshotAsync(Brain testBrain)
+    {
+        brain = testBrain; input.Text = "Проверь экран";
+        return ScreenshotAsync();
+    }
     private void Render(bool follow)
     {
         var viewer = FindScroll(answer);
@@ -312,7 +352,12 @@ internal sealed class MainWindow : Window
     }
     private void Scroll(double delta) { var scroll = FindScroll(answer); scroll?.ScrollToVerticalOffset(scroll.VerticalOffset + delta); }
     private void ChangeFont(double delta) { settings.FontSize = Math.Clamp(settings.FontSize + delta, 11, 32); if (shown.Length > 0) Render(false); SaveGeometry(); }
-    private void ShowOverlay() { Show(); native?.Protect(); Topmost = true; }
+    internal void ShowOverlay()
+    {
+        // Never ask WPF to Show a non-activating maximized/minimized window.
+        if (WindowState != WindowState.Normal) WindowState = WindowState.Normal;
+        Show(); native?.Constrain(); native?.Protect(); Topmost = true;
+    }
     private void FocusInput() { ShowOverlay(); Activate(); input.Focus(); Keyboard.Focus(input); }
     private void TogglePause() { if (brain is not null) { brain.Paused = !brain.Paused; RefreshStatus(); } }
 
@@ -327,7 +372,7 @@ internal sealed class MainWindow : Window
         else if (e.Key == Key.Escape)
         { if (attachment is not null) ClearImage(); else { input.Clear(); Keyboard.ClearFocus(); } e.Handled = true; }
     }
-    private void Attach(BitmapSource? image)
+    private void Attach(BitmapSource? image, bool focus = true)
     {
         if (image is null) return;
         // Normalize immediately so even clipboard images have a bounded payload.
@@ -335,7 +380,8 @@ internal sealed class MainWindow : Window
         using var stream = new MemoryStream(attachmentJpeg);
         var normalized = new BitmapImage(); normalized.BeginInit(); normalized.CacheOption = BitmapCacheOption.OnLoad;
         normalized.StreamSource = stream; normalized.EndInit(); normalized.Freeze();
-        attachment = normalized; thumbnail.Source = normalized; thumbnail.Visibility = Visibility.Visible; FocusInput();
+        attachment = normalized; thumbnail.Source = normalized; thumbnail.Visibility = Visibility.Visible;
+        if (focus) FocusInput();
     }
     private void ClearImage() { attachment = null; attachmentJpeg = null; thumbnail.Source = null; thumbnail.Visibility = Visibility.Collapsed; }
     private void Send()
@@ -348,7 +394,7 @@ internal sealed class MainWindow : Window
         }
         catch (Exception e) { Report(e.Message); }
     }
-    private async Task ScreenshotAsync(bool send)
+    private async Task ScreenshotAsync()
     {
         if (busyScreenshot) return;
         busyScreenshot = true;
@@ -359,12 +405,8 @@ internal sealed class MainWindow : Window
             if (closing) return;
             var image = Images.Capture();
             ShowOverlay();
-            if (send)
-            {
-                if (brain is null) OpenSettings();
-                else brain.Ask("", Images.Jpeg(image));
-            }
-            else Attach(image);
+            Attach(image, focus: false);
+            Send();
         }
         finally { if (visible && !closing) ShowOverlay(); busyScreenshot = false; }
     }
@@ -391,7 +433,7 @@ internal sealed class MainWindow : Window
     {
         try
         {
-            var report = new { Version = "0.1.1", Windows = Environment.OSVersion.VersionString,
+            var report = new { Version = "0.1.2", Windows = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
                 CaptureExclusion = native?.ProtectionStatus, Hotkeys = native?.HotkeyErrors,
                 Audio = audioStatus.Text, HasKeys = keys is not null };
@@ -407,6 +449,9 @@ internal sealed class MainWindow : Window
     }
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
+        saveKeys.Stop();
+        if (!closing && !PersistKeys())
+        { e.Cancel = true; var message = settingsMessage.Text; OpenSettings(); settingsMessage.Text = message; return; }
         if (smoke) { levels.Stop(); native?.Dispose(); http.Dispose(); return; }
         e.Cancel = true;
         if (closing) return;

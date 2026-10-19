@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Notely</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <!-- WPF owns the process DPI manifest; WinForms is only used for tray/monitor APIs. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>

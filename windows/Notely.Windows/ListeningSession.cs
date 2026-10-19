@@ -23,8 +23,12 @@ internal sealed class ListeningSession : IAsyncDisposable
         audio = new AudioService(settings);
         them = new DeepgramStream(keys.Deepgram, Paths.Keyterms());
         me = new DeepgramStream(keys.Deepgram, Paths.Keyterms());
-        them.Speech += result => { if (Current) brain.Speech(true, result.Text, result.End); };
-        me.Speech += result => { if (Current) brain.Speech(false, result.Text, result.End); };
+        them.Speech += result =>
+        {
+            if (!Current) return;
+            if (result.Started) brain.SpeechStarted(); else brain.Speech(true, result.Text, result.End);
+        };
+        me.Speech += result => { if (Current && !result.Started) brain.Speech(false, result.Text, result.End); };
         them.Status += (connected, text) => { if (!connected && Current) brain.DiscardSpeechBuffer(true); Update(2, "Deepgram собеседник: " + text); };
         me.Status += (connected, text) => { if (!connected && Current) brain.DiscardSpeechBuffer(false); Update(3, "Deepgram я: " + text); };
         audio.Status += (output, text) => Update(output ? 0 : 1, (output ? "системный звук: " : "микрофон: ") + text);
