@@ -1,0 +1,23 @@
+name: Publication privacy
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  commit-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject private author and committer emails
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          emails = set(subprocess.check_output(
+              ['git', 'log', '--all', '--format=%ae%n%ce'], text=True).splitlines())
+          invalid = [email for email in emails if not (
+              email.endswith('@users.noreply.github.com') or email == 'noreply@github.com')]
+          if invalid:
+              raise SystemExit('Private commit emails detected; use a GitHub noreply address. Values omitted.')
+          print('PASS: author/committer metadata uses GitHub noreply addresses.')
+          PY

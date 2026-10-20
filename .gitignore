@@ -2,3 +2,16 @@
 build/
 *.app
 signing/
+.env
+.env.*
+!.env.example
+**/profile.md
+**/keyterms.txt
+**/Notely-API-keys.txt
+**/keys.dat*
+**/*.log
+**/diagnostics*.json
+**/invisibility-test.png
+**/*.wav
+**/*.m4a
+**/*.mp3
