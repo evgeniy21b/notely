@@ -2,6 +2,12 @@
 build/
 *.app
 signing/
+**/bin/
+**/obj/
+**/TestResults/
+windows/artifacts/
+*.user
+*.suo
 .env
 .env.*
 !.env.example
